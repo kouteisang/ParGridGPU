@@ -1,16 +1,28 @@
 #include "Graph/MultilayerGraph.h"
 #include "utils.h"
 #include "Algorithm/ParPeel.cuh"
+#include "Algorithm/ParPeel_klist.cuh"
+
+
+
+
+enum Algorithm{
+    llist = 1,
+    klist = 2,
+};
 
 int main(int argc, char* argv[]){
 
     string dataset = "example";
     int order = 0;
+    int alg = 1;
 
     for(int i = 1; i < argc; i ++){
         string arg = argv[i];
         if (arg == "-d" && i + 1 < argc) {
             dataset = argv[++i];
+        }else if(arg == "-a" && i+1 < argc){
+            alg = std::stoi(argv[++i]);
         }
     }
 
@@ -90,7 +102,23 @@ int main(int argc, char* argv[]){
     cudaEventCreate(&stop);  // Calculate time
     
     cudaEventRecord(start, 0);
-    gpu_baseline_de(data_pointers, degs);
+
+    switch (alg)
+    {
+        case Algorithm::llist:
+            gpu_baseline_de(data_pointers, degs);
+            break;
+        case Algorithm::klist:
+            gpu_baseline_de_klist(data_pointers, degs);
+            break;
+        default:
+            break;
+    }
+
+    
+
+
+
     cudaEventRecord(stop, 0);
     cudaEventSynchronize(stop);
     float gpu_time = 0;
