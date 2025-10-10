@@ -1,6 +1,7 @@
 #include "Graph/MultilayerGraph.h"
 #include "utils.h"
 #include "Algorithm/ParPeel.cuh"
+#include "Algorithm/ParPeel_block.cuh"
 #include "Algorithm/ParPeel_klist.cuh"
 
 
@@ -9,9 +10,12 @@
 enum Algorithm{
     llist = 1,
     klist = 2,
+    llist_block = 3,
 };
 
 int main(int argc, char* argv[]){
+
+    cudaSetDevice(1);
 
     string dataset = "example";
     int order = 0;
@@ -111,6 +115,9 @@ int main(int argc, char* argv[]){
         case Algorithm::klist:
             gpu_baseline_de_klist(data_pointers, degs);
             break;
+        case Algorithm::llist_block:
+            gpu_baseline_block(data_pointers, degs);
+            break;
         default:
             break;
     }
@@ -123,7 +130,7 @@ int main(int argc, char* argv[]){
     cudaEventSynchronize(stop);
     float gpu_time = 0;
     cudaEventElapsedTime(&gpu_time, start, stop);
-    std::cout << "GPU time = " << gpu_time << " ms" << std::endl;
+    std::cout << "GPU time = " << gpu_time*1.0/1000 << " s" << std::endl;
 
     cudaEventDestroy(start);
     cudaEventDestroy(stop);
