@@ -1,8 +1,8 @@
 #include "Graph/MultilayerGraph.h"
 #include "utils.h"
-#include "Algorithm/ParPeel.cuh"
-#include "Algorithm/ParPeel_block.cuh"
-#include "Algorithm/ParPeel_klist.cuh"
+#include "Algorithm/ParGridGPU.cuh"
+#include "Algorithm/ParGridGPU_block.cuh"
+#include "Algorithm/ParGridGPU_k.cuh"
 
 
 

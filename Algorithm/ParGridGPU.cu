@@ -1,4 +1,4 @@
-#include "ParPeel.cuh"
+#include "ParGridGPU.cuh"
 
 __global__ void trykernel(int** adj ,int* deg, int* offset, int n_layer, int n_vtx){
 

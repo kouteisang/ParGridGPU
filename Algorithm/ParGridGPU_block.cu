@@ -1,7 +1,7 @@
-#include "ParPeel_klist.cuh"
+#include "ParGridGPU_block.cuh"
 
 
-__global__ void scan_klist(int* global_buffer, int* buf_count, int* deg, int* precount, int* visit, int n_vtx, int n_layer, int k, int l){
+__global__ void scan_block(int* global_buffer, int* buf_count, int* deg, int* precount, int* visit, int n_vtx, int n_layer, int k, int l){
     
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     __shared__ int sh_buf_count;
@@ -38,56 +38,44 @@ __global__ void scan_klist(int* global_buffer, int* buf_count, int* deg, int* pr
     }
 }
 
-__global__ void update_klist(int* global_buffer, int* buf_count, int *deg, int **adj, int* offset, int* precount, int* visit, int n_vtx, int n_layer, int k, int lambda, int* global_count){
-    
+
+__global__ void update_block(int* global_buffer, int* buf_count, int *deg, int **adj, int* offset, int* precount, int* visit, int n_vtx, int n_layer, int k, int lambda, int* global_count){
+
+
     __shared__ int start, end;
     __shared__ int* t_global_buffer;
 
-    int warp_per_block = blockDim.x / WARP_SIZE;
-    int warp_id = threadIdx.x / WARP_SIZE;
-    int lane_id = threadIdx.x % WARP_SIZE;
+    // int warp_per_block = blockDim.x / WARP_SIZE;
+    // int warp_id = threadIdx.x / WARP_SIZE;
+    // int lane_id = threadIdx.x % WARP_SIZE;
     int start_prime, end_prime;
     if(threadIdx.x == 0){
         t_global_buffer = global_buffer + blockIdx.x * BUFFER_SIZE;
         start = 0;
         end = buf_count[blockIdx.x]; // The end position of the buffer
-        // printf("id = %d, end = %d\n", blockIdx.x, end);
     } 
 
     __syncthreads();
 
-    while(true){
+    for(int vid = 0; ; vid ++){
         __syncthreads();
-        // printf("end = %d\n", end);
-        if(start >= end) break; // All the thread break the iteration
-        start_prime = start + warp_id; // Get the vertex id position
-        end_prime = end; // Get the last position of the vertex id
-        __syncthreads();
-        if(start_prime >= end_prime) continue; // The vertex position is larger than the number of valid vertices in the buffer
-        if(threadIdx.x == 0){
-            start = min(start + warp_per_block, end); // update the start position
-        }
-        int v = t_global_buffer[start_prime]; // Get the vertex id
+        if (vid >= end) break;         
+        int v = t_global_buffer[vid]; 
 
         for(int l = 0; l < n_layer; l ++){
-            __syncwarp();
+            
             int offset_start = offset[l * (n_vtx+1) + v]; // offset of v 
             int offset_end = offset[l * (n_vtx+1) + v + 1]; // offset of v
             int* adj_l = adj[l];
-            while (true){
-                __syncwarp();
-                if(offset_start >= offset_end) break;
-                int uid = offset_start + lane_id;
-                offset_start = offset_start + WARP_SIZE; // update the offset position, each thread maintain its own offset_start
-                if(uid >= offset_end) continue; // This vertex does not has so many neighbouthood
-                int u = adj_l[uid]; // v's out-neighbouthood u
+
+            for(int uid = threadIdx.x + offset_start; uid < offset_end; uid += blockDim.x){
+                int u = adj_l[uid]; 
                 if(visit[u] == 1) continue;
-                // printf("l = %d, v = %d, u = %d\n", l, v, u);
                 int originDeg = atomicSub(&deg[u*n_layer + l], 1);
                 if (originDeg == k){
-                    // printf("u = %d, originDeg = %d, precount = %d\n", u, originDeg, precount[u]);
+                    
                     int originCnt = atomicSub(&precount[u], 1);
-                    // printf("originCnt = %d\n", originCnt); 
+
                     if(originCnt == lambda && visit[u] == 0){
                         // printf("u = %d\n", u);
                         visit[u] = 1;
@@ -95,10 +83,11 @@ __global__ void update_klist(int* global_buffer, int* buf_count, int *deg, int *
                         int end_pos = atomicAdd(&end, 1);
                         t_global_buffer[end_pos] = u;
                     }
+
                 }
             }
-
         }
+
     }
 
     if(threadIdx.x == 0 && end > 0){
@@ -106,13 +95,12 @@ __global__ void update_klist(int* global_buffer, int* buf_count, int *deg, int *
     }
 
 
+    
 }
 
-void gpu_baseline_de_klist(G_pointers &p, int* dges){
-    // printf("Here?\n");
-    // trykernel<<<1, 1>>>(p.adj, p.deg, p.offset, p.n_layer, p.n_vtx);
-    // cudaDeviceSynchronize(); 
 
+void gpu_baseline_block(G_pointers &p, int* dges){
+    
     int* global_count = 0;
     chkerr(cudaMalloc(&global_count, sizeof(int)));
 
@@ -127,33 +115,30 @@ void gpu_baseline_de_klist(G_pointers &p, int* dges){
     int n_layer = p.n_layer;
     int n_vtx = p.n_vtx;
 
-    int l = 0;
+    int k = 0;
     int count = 0;
-
-    for(int k = 1; ; k ++ ){
-        l = 1;
+    
+    for(int l = 1; l <= n_layer; l ++ ){
+        k = 1;
         cudaMemset(global_count, 0, sizeof(int));
         cudaMemset(p.precount, 0, sizeof(int)*n_vtx);
         cudaMemset(p.visit, 0, p.n_vtx * sizeof(int)); // flag = false means has not visited
         chkerr(cudaMemcpy(p.t_deg, p.deg, p.n_vtx * p.n_layer * sizeof(int), cudaMemcpyDeviceToDevice));
         count = 0;
-        while(count < n_vtx){ 
+         while(count < n_vtx){ 
             cudaMemset(buf_count, 0, sizeof(int) * BLK_NUMS);
-            scan_klist<<<BLK_NUMS, BLK_DIM>>>(global_buffer, buf_count, p.t_deg, p.precount, p.visit,n_vtx, n_layer, k, l);
-            update_klist<<<BLK_NUMS, BLK_DIM>>>(global_buffer, buf_count, p.t_deg, p.adj, p.offset, p.precount, p.visit, n_vtx, n_layer, k, l, global_count);
+            scan_block<<<BLK_NUMS, BLK_DIM>>>(global_buffer, buf_count, p.t_deg, p.precount, p.visit,n_vtx, n_layer, k, l);
+            update_block<<<BLK_NUMS, BLK_DIM>>>(global_buffer, buf_count, p.t_deg, p.adj, p.offset, p.precount, p.visit, n_vtx, n_layer, k, l, global_count);
             chkerr(cudaMemcpy(&count, global_count, sizeof(int), cudaMemcpyDeviceToHost));
             // printf("count = %d\n", count);
             // printf("l = %d, k = %d, valid = %d\n", l, k, n_vtx - count);
             if(count < n_vtx){
-                l ++;
+                k ++;
             }else if(count >= n_vtx){
                break;
             }
-            // printf("%d %d\n", k, l);
         }
-        if(l == 1 && count == n_vtx) break;
+        if(k == 1 && count == n_vtx) break;
     }
-}
 
-// 0 1 2
-// 0 3 5
+}
